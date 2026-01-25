@@ -16,6 +16,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.core.database import Base
+from app.core.exceptions import InvalidStateTransitionError
 
 
 class WorkflowExecutionStatus(str, enum.Enum):
@@ -108,3 +109,88 @@ class WorkflowExecution(Base):
             WorkflowExecutionStatus.FAILED,
             WorkflowExecutionStatus.CANCELLED
         }
+    
+    def transition_to(self, new_status: WorkflowExecutionStatus) -> None:
+        """
+        Transition the workflow execution to a new status.
+        
+        This method enforces the state machine rules:
+        - pending → running (valid)
+        - running → success|failed|cancelled (valid)
+        - terminal → * (invalid - terminal states are immutable)
+        - Any other transition (invalid)
+        
+        Args:
+            new_status: The target status to transition to
+            
+        Raises:
+            InvalidStateTransitionError: If the transition is not allowed
+            
+        Side effects:
+            - Sets started_at when transitioning to RUNNING
+            - Sets finished_at when transitioning to terminal state
+        """
+        current_status = self.status
+        
+        # Enforce immutability: terminal states cannot be changed
+        if self.is_terminal:
+            raise InvalidStateTransitionError(
+                from_state=current_status.value,
+                to_state=new_status.value
+            )
+        
+        # Validate the transition is allowed
+        if not self._validate_transition(current_status, new_status):
+            raise InvalidStateTransitionError(
+                from_state=current_status.value,
+                to_state=new_status.value
+            )
+        
+        # Perform the transition
+        self.status = new_status
+        
+        # Set timestamps based on the new state
+        if new_status == WorkflowExecutionStatus.RUNNING:
+            self.started_at = datetime.utcnow()
+        
+        if new_status in {
+            WorkflowExecutionStatus.SUCCESS,
+            WorkflowExecutionStatus.FAILED,
+            WorkflowExecutionStatus.CANCELLED
+        }:
+            self.finished_at = datetime.utcnow()
+    
+    def _validate_transition(
+        self,
+        from_status: WorkflowExecutionStatus,
+        to_status: WorkflowExecutionStatus
+    ) -> bool:
+        """
+        Validate if a state transition is allowed.
+        
+        Valid transitions:
+        - PENDING → RUNNING
+        - RUNNING → SUCCESS
+        - RUNNING → FAILED
+        - RUNNING → CANCELLED
+        
+        Args:
+            from_status: Current status
+            to_status: Target status
+            
+        Returns:
+            True if transition is valid, False otherwise
+        """
+        valid_transitions = {
+            WorkflowExecutionStatus.PENDING: {
+                WorkflowExecutionStatus.RUNNING
+            },
+            WorkflowExecutionStatus.RUNNING: {
+                WorkflowExecutionStatus.SUCCESS,
+                WorkflowExecutionStatus.FAILED,
+                WorkflowExecutionStatus.CANCELLED
+            }
+        }
+        
+        allowed_targets = valid_transitions.get(from_status, set())
+        return to_status in allowed_targets

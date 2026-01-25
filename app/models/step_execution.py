@@ -16,6 +16,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 from app.core.database import Base
+from app.core.exceptions import InvalidStateTransitionError
 
 
 class StepExecutionStatus(str, enum.Enum):
@@ -117,3 +118,88 @@ class StepExecution(Base):
             StepExecutionStatus.FAILED,
             StepExecutionStatus.SKIPPED
         }
+    
+    def transition_to(self, new_status: StepExecutionStatus) -> None:
+        """
+        Transition the step execution to a new status.
+        
+        This method enforces the state machine rules:
+        - pending → running (valid)
+        - running → success|failed|skipped (valid)
+        - terminal → * (invalid - terminal states are immutable)
+        - Any other transition (invalid)
+        
+        Args:
+            new_status: The target status to transition to
+            
+        Raises:
+            InvalidStateTransitionError: If the transition is not allowed
+            
+        Side effects:
+            - Sets started_at when transitioning to RUNNING
+            - Sets finished_at when transitioning to terminal state
+        """
+        current_status = self.status
+        
+        # Enforce immutability: terminal states cannot be changed
+        if self.is_terminal:
+            raise InvalidStateTransitionError(
+                from_state=current_status.value,
+                to_state=new_status.value
+            )
+        
+        # Validate the transition is allowed
+        if not self._validate_transition(current_status, new_status):
+            raise InvalidStateTransitionError(
+                from_state=current_status.value,
+                to_state=new_status.value
+            )
+        
+        # Perform the transition
+        self.status = new_status
+        
+        # Set timestamps based on the new state
+        if new_status == StepExecutionStatus.RUNNING:
+            self.started_at = datetime.utcnow()
+        
+        if new_status in {
+            StepExecutionStatus.SUCCESS,
+            StepExecutionStatus.FAILED,
+            StepExecutionStatus.SKIPPED
+        }:
+            self.finished_at = datetime.utcnow()
+    
+    def _validate_transition(
+        self,
+        from_status: StepExecutionStatus,
+        to_status: StepExecutionStatus
+    ) -> bool:
+        """
+        Validate if a state transition is allowed.
+        
+        Valid transitions:
+        - PENDING → RUNNING
+        - RUNNING → SUCCESS
+        - RUNNING → FAILED
+        - RUNNING → SKIPPED
+        
+        Args:
+            from_status: Current status
+            to_status: Target status
+            
+        Returns:
+            True if transition is valid, False otherwise
+        """
+        valid_transitions = {
+            StepExecutionStatus.PENDING: {
+                StepExecutionStatus.RUNNING
+            },
+            StepExecutionStatus.RUNNING: {
+                StepExecutionStatus.SUCCESS,
+                StepExecutionStatus.FAILED,
+                StepExecutionStatus.SKIPPED
+            }
+        }
+        
+        allowed_targets = valid_transitions.get(from_status, set())
+        return to_status in allowed_targets
