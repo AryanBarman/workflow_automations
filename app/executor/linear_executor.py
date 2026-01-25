@@ -195,6 +195,8 @@ class LinearExecutor:
             return InputStep()
         elif step.type == StepType.LOGIC:
             return TransformStep()
+        elif step.type == StepType.STORAGE:
+            return PersistStep()
         elif step.type == StepType.AI:
             # For Phase 0, AI steps not implemented yet
             return FailStep()

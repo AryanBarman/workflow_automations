@@ -48,3 +48,129 @@ async def test_db() -> AsyncGenerator[AsyncSession, None]:
         await conn.run_sync(Base.metadata.drop_all)
     
     await engine.dispose()
+
+
+# ============================================================================
+# Synchronous SQLite fixtures for unit tests
+# ============================================================================
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from app.models.workflow import Workflow
+from app.models.step import Step, StepType
+from app.models.workflow_execution import WorkflowExecution
+from app.models.step_execution import StepExecution
+
+
+@pytest.fixture
+def db_session():
+    """
+    Create an in-memory SQLite database for testing.
+    
+    This fixture is shared across all unit tests to avoid duplication.
+    """
+    engine = create_engine("sqlite:///:memory:", echo=False)
+    
+    # Create tables
+    Workflow.__table__.create(engine, checkfirst=True)
+    Step.__table__.create(engine, checkfirst=True)
+    WorkflowExecution.__table__.create(engine, checkfirst=True)
+    StepExecution.__table__.create(engine, checkfirst=True)
+    
+    SessionLocal = sessionmaker(bind=engine)
+    session = SessionLocal()
+    yield session
+    session.close()
+
+
+@pytest.fixture
+def workflow_0a_happy_path(db_session):
+    """
+    Create Workflow 0A — Happy Path.
+    
+    Steps: InputStep → TransformStep → PersistStep
+    Expected: All steps succeed, workflow succeeds
+    
+    This is the canonical happy path workflow for Phase 0.
+    """
+    # Create workflow
+    workflow = Workflow(
+        name="Workflow 0A — Happy Path",
+        version=1,
+        created_by="test_system"
+    )
+    db_session.add(workflow)
+    db_session.commit()
+    db_session.refresh(workflow)
+    
+    # Create steps
+    step1 = Step(
+        workflow_id=workflow.id,
+        type=StepType.MANUAL,  # InputStep
+        config={"description": "Accept user input"},
+        order=1
+    )
+    step2 = Step(
+        workflow_id=workflow.id,
+        type=StepType.LOGIC,  # TransformStep
+        config={"description": "Transform data"},
+        order=2
+    )
+    step3 = Step(
+        workflow_id=workflow.id,
+        type=StepType.STORAGE,  # PersistStep
+        config={"description": "Persist data"},
+        order=3
+    )
+    
+    db_session.add_all([step1, step2, step3])
+    db_session.commit()
+    
+    return workflow
+
+
+@pytest.fixture
+def workflow_0b_failure_path(db_session):
+    """
+    Create Workflow 0B — Failure Path.
+    
+    Steps: InputStep → FailStep → PersistStep (not executed)
+    Expected: Step 2 fails, workflow fails, step 3 doesn't execute
+    
+    This is the canonical failure path workflow for Phase 0.
+    """
+    # Create workflow
+    workflow = Workflow(
+        name="Workflow 0B — Failure Path",
+        version=1,
+        created_by="test_system"
+    )
+    db_session.add(workflow)
+    db_session.commit()
+    db_session.refresh(workflow)
+    
+    # Create steps
+    step1 = Step(
+        workflow_id=workflow.id,
+        type=StepType.MANUAL,  # InputStep - succeeds
+        config={"description": "Accept user input"},
+        order=1
+    )
+    step2 = Step(
+        workflow_id=workflow.id,
+        type=StepType.API,  # FailStep - always fails
+        config={"description": "API call that fails"},
+        order=2
+    )
+    step3 = Step(
+        workflow_id=workflow.id,
+        type=StepType.STORAGE,  # PersistStep - should not execute
+        config={"description": "Persist data (not executed)"},
+        order=3
+    )
+    
+    db_session.add_all([step1, step2, step3])
+    db_session.commit()
+    
+    return workflow
+

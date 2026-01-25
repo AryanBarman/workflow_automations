@@ -24,6 +24,7 @@ class StepType(str, enum.Enum):
     AI = "ai"
     API = "api"
     LOGIC = "logic"
+    STORAGE = "storage"
 
 
 class Step(Base):
