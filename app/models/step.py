@@ -10,9 +10,9 @@ A step is:
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import String, DateTime, Integer, ForeignKey, Enum as SQLEnum
+from sqlalchemy import String, DateTime, Integer, ForeignKey, Enum as SQLEnum, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 import enum
 
 from app.core.database import Base
@@ -62,7 +62,7 @@ class Step(Base):
         SQLEnum(StepType, name="step_type"),
         nullable=False
     )
-    config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     order: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

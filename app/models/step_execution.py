@@ -11,9 +11,9 @@ from datetime import datetime
 from uuid import uuid4
 import enum
 
-from sqlalchemy import String, DateTime, ForeignKey, Text, Enum as SQLEnum
+from sqlalchemy import String, DateTime, ForeignKey, Text, Enum as SQLEnum, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 
 from app.core.database import Base
 from app.core.exceptions import InvalidStateTransitionError
@@ -77,8 +77,8 @@ class StepExecution(Base):
     )
     
     # Execution data (stored as JSON for flexibility)
-    input: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    output: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    input: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    output: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     # Timestamps

@@ -1,14 +1,15 @@
 """
-Linear Executor - Phase 0, Slice 0.3, Tasks 0.3.3 & 0.3.4
+Linear Executor - Phase 0, Slice 0.3, Tasks 0.3.3, 0.3.4 & 0.3.5
 
 The core executor that manages workflow execution lifecycle and executes steps sequentially.
 
 For Phase 0, this executor:
 - Creates WorkflowExecution records
-- Manages state transitions (PENDING → RUNNING)
+- Manages state transitions (PENDING → RUNNING → SUCCESS/FAILED)
 - Executes steps sequentially
 - Creates StepExecution records for each step
 - Manages data flow between steps
+- Completes workflow execution based on step results
 """
 
 from typing import Any
@@ -34,6 +35,7 @@ class LinearExecutor:
     5. Creates StepExecution records for each step
     6. Manages data flow between steps
     7. Stops on first failure
+    8. Completes workflow execution (SUCCESS or FAILED)
     
     Design principles:
     - Boring and simple
@@ -54,14 +56,15 @@ class LinearExecutor:
     
     def execute(self, workflow: Workflow, trigger_input: Any, trigger_source: str = "manual") -> WorkflowExecution:
         """
-        Execute a workflow - create execution, run steps sequentially.
+        Execute a workflow - create execution, run steps sequentially, complete execution.
         
         This method:
         1. Creates a WorkflowExecution in PENDING state
         2. Persists it to the database
         3. Transitions to RUNNING
         4. Executes steps sequentially
-        5. Returns the execution
+        5. Completes workflow execution (SUCCESS or FAILED)
+        6. Returns the execution
         
         Args:
             workflow: The workflow definition to execute
@@ -69,7 +72,7 @@ class LinearExecutor:
             trigger_source: How this execution was triggered (default: "manual")
             
         Returns:
-            WorkflowExecution: The execution record with step executions
+            WorkflowExecution: The completed execution record (in terminal state)
         """
         # Step 1: Create WorkflowExecution in PENDING state
         workflow_execution = WorkflowExecution(
@@ -92,7 +95,8 @@ class LinearExecutor:
         # Step 4: Execute steps sequentially
         self._execute_steps(workflow_execution, workflow, trigger_input)
         
-        # Note: Workflow completion (transitioning to SUCCESS/FAILED) is Task 0.3.5
+        # Step 5: Complete workflow execution
+        self._complete_workflow_execution(workflow_execution)
         
         return workflow_execution
     
@@ -191,10 +195,44 @@ class LinearExecutor:
             return InputStep()
         elif step.type == StepType.LOGIC:
             return TransformStep()
-        elif step.type == StepType.STORAGE:
-            return PersistStep()
+        elif step.type == StepType.AI:
+            # For Phase 0, AI steps not implemented yet
+            return FailStep()
         elif step.type == StepType.API:
-            # For Phase 0, treat API steps as FailStep (not implemented yet)
+            # For Phase 0, API steps not implemented yet
             return FailStep()
         else:
             raise ValueError(f"Unknown step type: {step.type}")
+    
+    def _complete_workflow_execution(self, workflow_execution: WorkflowExecution) -> None:
+        """
+        Complete the workflow execution by transitioning to terminal state.
+        
+        This method:
+        - Queries all StepExecution records for this workflow
+        - Checks if any step failed
+        - Transitions to FAILED if any step failed
+        - Transitions to SUCCESS if all steps succeeded
+        - Sets finished_at timestamp via state machine
+        
+        Args:
+            workflow_execution: The workflow execution to complete
+        """
+        # Query all step executions for this workflow
+        step_executions = self.db_session.query(StepExecution).filter_by(
+            workflow_execution_id=workflow_execution.id
+        ).all()
+        
+        # Check if any step failed
+        any_failed = any(step_exec.status == StepExecutionStatus.FAILED for step_exec in step_executions)
+        
+        if any_failed:
+            # Transition to FAILED
+            workflow_execution.transition_to(WorkflowExecutionStatus.FAILED)
+        else:
+            # All steps succeeded, transition to SUCCESS
+            workflow_execution.transition_to(WorkflowExecutionStatus.SUCCESS)
+        
+        # Persist final state
+        self.db_session.commit()
+        self.db_session.refresh(workflow_execution)
