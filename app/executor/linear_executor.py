@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Workflow, WorkflowExecution, WorkflowExecutionStatus,
-    Step, StepExecution, StepExecutionStatus, StepType
+    Step, StepExecution, StepExecutionStatus, StepType,
+    ExecutionLog
 )
 from app.core.executor_contract import ExecutionContext, StepExecutor
 from app.steps import InputStep, TransformStep, PersistStep, FailStep
@@ -92,6 +93,15 @@ class LinearExecutor:
         self.db_session.commit()
         self.db_session.refresh(workflow_execution)
         
+        # Log: Workflow execution started
+        log_workflow_started = ExecutionLog(
+            step_execution_id=None,  # Workflow-level log
+            message=f"Workflow execution started: {workflow.name}",
+            log_metadata={"workflow_id": str(workflow.id), "status": "RUNNING"}
+        )
+        self.db_session.add(log_workflow_started)
+        self.db_session.commit()
+        
         # Step 4: Execute steps sequentially
         self._execute_steps(workflow_execution, workflow, trigger_input)
         
@@ -141,6 +151,15 @@ class LinearExecutor:
             step_execution.transition_to(StepExecutionStatus.RUNNING)
             self.db_session.commit()
             
+            # Log: Step started
+            log_started = ExecutionLog(
+                step_execution_id=str(step_execution.id),
+                message=f"Step started: {step.type.value}",
+                log_metadata={"step_type": step.type.value, "status": "RUNNING"}
+            )
+            self.db_session.add(log_started)
+            self.db_session.commit()
+            
             # Create execution context
             context = ExecutionContext(
                 workflow_execution_id=workflow_execution.id,
@@ -161,11 +180,32 @@ class LinearExecutor:
                 step_execution.output = result.output
                 current_input = result.output  # Pass output to next step
                 
+                # Log: Step completed successfully
+                log_success = ExecutionLog(
+                    step_execution_id=str(step_execution.id),
+                    message=f"Step completed successfully: {step.type.value}",
+                    log_metadata={"step_type": step.type.value, "status": "SUCCESS"}
+                )
+                self.db_session.add(log_success)
+                
             else:  # failure
                 # Transition to FAILED
                 step_execution.transition_to(StepExecutionStatus.FAILED)
                 if result.error:
                     step_execution.error = f"{result.error.code}: {result.error.message}"
+                
+                # Log: Step failed
+                error_msg = f"{result.error.code}: {result.error.message}" if result.error else "Unknown error"
+                log_failed = ExecutionLog(
+                    step_execution_id=str(step_execution.id),
+                    message=f"Step failed: {step.type.value}",
+                    log_metadata={
+                        "step_type": step.type.value,
+                        "status": "FAILED",
+                        "error": error_msg
+                    }
+                )
+                self.db_session.add(log_failed)
                 
                 # Persist and stop execution
                 self.db_session.commit()
@@ -231,9 +271,26 @@ class LinearExecutor:
         if any_failed:
             # Transition to FAILED
             workflow_execution.transition_to(WorkflowExecutionStatus.FAILED)
+            
+            # Log: Workflow execution failed
+            log_workflow_failed = ExecutionLog(
+                step_execution_id=None,  # Workflow-level log
+                message="Workflow execution failed",
+                log_metadata={"workflow_id": str(workflow_execution.workflow_id), "status": "FAILED"}
+            )
+            self.db_session.add(log_workflow_failed)
+            
         else:
             # All steps succeeded, transition to SUCCESS
             workflow_execution.transition_to(WorkflowExecutionStatus.SUCCESS)
+            
+            # Log: Workflow execution completed successfully
+            log_workflow_success = ExecutionLog(
+                step_execution_id=None,  # Workflow-level log
+                message="Workflow execution completed successfully",
+                log_metadata={"workflow_id": str(workflow_execution.workflow_id), "status": "SUCCESS"}
+            )
+            self.db_session.add(log_workflow_success)
         
         # Persist final state
         self.db_session.commit()

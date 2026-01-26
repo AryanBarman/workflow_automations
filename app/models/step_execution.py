@@ -107,6 +107,12 @@ class StepExecution(Base):
         back_populates="executions"
     )
     
+    logs: Mapped[list["ExecutionLog"]] = relationship(
+        "ExecutionLog",
+        back_populates="step_execution",
+        cascade="all, delete-orphan"
+    )
+    
     def __repr__(self) -> str:
         return f"<StepExecution(id={self.id}, status={self.status})>"
     

@@ -60,6 +60,7 @@ from app.models.workflow import Workflow
 from app.models.step import Step, StepType
 from app.models.workflow_execution import WorkflowExecution
 from app.models.step_execution import StepExecution
+from app.models.execution_log import ExecutionLog
 
 
 @pytest.fixture
@@ -76,6 +77,7 @@ def db_session():
     Step.__table__.create(engine, checkfirst=True)
     WorkflowExecution.__table__.create(engine, checkfirst=True)
     StepExecution.__table__.create(engine, checkfirst=True)
+    ExecutionLog.__table__.create(engine, checkfirst=True)
     
     SessionLocal = sessionmaker(bind=engine)
     session = SessionLocal()
