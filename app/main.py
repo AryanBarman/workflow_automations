@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.core.logging import setup_logging, get_logger
-from app.api import workflows_router
+from app.api import workflows_router, executions_router
 
 # Set up logging
 setup_logging()
@@ -32,6 +32,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(workflows_router)
+app.include_router(executions_router)
 
 
 @app.on_event("startup")
