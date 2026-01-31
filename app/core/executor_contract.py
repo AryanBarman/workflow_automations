@@ -115,6 +115,11 @@ class StepError:
         code: Machine-readable error code (e.g., "TIMEOUT", "VALIDATION_FAILED")
         message: Human-readable error message
         retryable: Whether this error is transient and can be retried
+        error_type: Classification of error - "transient" or "permanent"
+    
+    Error Types:
+        - transient: Temporary failures (network issues, rate limits, timeouts)
+        - permanent: Permanent failures (validation errors, bad data, logic errors)
     
     Note:
         Detailed error taxonomy and retry logic come in Phase 1.
@@ -124,6 +129,12 @@ class StepError:
     code: str
     message: str
     retryable: bool = False  # Conservative default: assume not retryable
+    error_type: str = "permanent"  # "transient" | "permanent"
+    
+    def __post_init__(self):
+        """Validate error_type."""
+        if self.error_type not in ("transient", "permanent"):
+            raise ValueError(f"Invalid error_type: {self.error_type}. Must be 'transient' or 'permanent'")
 
 
 @dataclass

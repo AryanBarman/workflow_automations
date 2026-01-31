@@ -193,6 +193,7 @@ class LinearExecutor:
                 step_execution.transition_to(StepExecutionStatus.FAILED)
                 if result.error:
                     step_execution.error = f"{result.error.code}: {result.error.message}"
+                    step_execution.error_type = result.error.error_type  # Save error classification
                 
                 # Log: Step failed
                 error_msg = f"{result.error.code}: {result.error.message}" if result.error else "Unknown error"

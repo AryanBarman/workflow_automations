@@ -51,11 +51,22 @@ class FailStep:
         """
         started_at = datetime.utcnow()
         
+        # Build enhanced error message with context
+        input_summary = str(input)[:100] if input else "None"
+        error_message = (
+            f"FailStep execution failed as designed. "
+            f"Step ID: {context.step_id}, "
+            f"Workflow Execution ID: {context.workflow_execution_id}, "
+            f"Timestamp: {started_at.isoformat()}, "
+            f"Input: {input_summary}"
+        )
+        
         # This step always fails
         error = StepError(
             code="FORCED_FAILURE",
-            message="This step is designed to fail for testing purposes",
-            retryable=False  # Forced failures are not retryable
+            message=error_message,
+            retryable=False,  # Forced failures are not retryable
+            error_type="permanent"  # This is a permanent, designed failure
         )
         
         finished_at = datetime.utcnow()

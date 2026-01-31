@@ -80,6 +80,7 @@ class StepExecution(Base):
     input: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     output: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_type: Mapped[str | None] = mapped_column(String(50), nullable=True)  # "transient" | "permanent"
     
     # Timestamps
     started_at: Mapped[datetime | None] = mapped_column(
