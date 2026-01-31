@@ -50,9 +50,9 @@ class WorkflowExecutionSchema(BaseModel):
     id: UUID
     workflow_id: UUID
     status: str
-    started_at: datetime
+    started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
-    step_executions: List[StepExecutionSchema] = []
+    step_executions: Optional[List[StepExecutionSchema]] = None
     
     model_config = ConfigDict(from_attributes=True)
 

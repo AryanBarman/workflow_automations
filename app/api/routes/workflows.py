@@ -9,11 +9,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, noload
 
 from app.core.database import get_db
-from app.models import Workflow
-from app.schemas import WorkflowSchema, WorkflowDetailSchema, ExecuteWorkflowRequest, ExecuteWorkflowResponse
+from app.models import Workflow, WorkflowExecution
+from app.schemas import WorkflowSchema, WorkflowDetailSchema, ExecuteWorkflowRequest, ExecuteWorkflowResponse, WorkflowExecutionSchema
 from app.executor import LinearExecutor
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
@@ -112,3 +112,45 @@ async def execute_workflow(
         status=execution.status.value,
         started_at=execution.started_at
     )
+
+
+@router.get(
+    "/{workflow_id}/executions",
+    response_model=List[WorkflowExecutionSchema],
+    response_model_exclude={"__all__": {"step_executions"}}
+)
+async def list_workflow_executions(workflow_id: UUID, db: AsyncSession = Depends(get_db)):
+    """
+    Get recent executions for a workflow.
+    
+    Returns the 5 most recent executions for the specified workflow,
+    ordered by creation time (newest first).
+    
+    Args:
+        workflow_id: UUID of the workflow
+        
+    Returns:
+        List of up to 5 most recent executions (without step executions)
+        
+    Raises:
+        HTTPException: 404 if workflow not found
+    """
+    # Verify workflow exists
+    workflow_result = await db.execute(
+        select(Workflow).where(Workflow.id == workflow_id)
+    )
+    workflow = workflow_result.scalar_one_or_none()
+    
+    if workflow is None:
+        raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
+    
+    # Query executions for this workflow
+    executions_result = await db.execute(
+        select(WorkflowExecution)
+        .where(WorkflowExecution.workflow_id == workflow_id)
+        .order_by(WorkflowExecution.created_at.desc())
+        .limit(5)
+    )
+    executions = executions_result.scalars().all()
+    
+    return executions
