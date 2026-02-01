@@ -14,10 +14,12 @@ from app.steps.input_step import InputStep
 from app.steps.transform_step import TransformStep
 from app.steps.persist_step import PersistStep
 from app.steps.fail_step import FailStep
+from app.steps.transient_fail_step import TransientFailStep
 
 __all__ = [
     "InputStep",
     "TransformStep",
     "PersistStep",
     "FailStep",
+    "TransientFailStep",
 ]

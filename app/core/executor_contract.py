@@ -189,6 +189,7 @@ class ExecutionContext:
     workflow_id: UUID
     step_id: UUID
     trigger_input: Any  # The original workflow trigger data
+    retry_count: int = 0  # Current retry count (0 for initial attempt)
     
     # Future phases may add:
     # - user_id: UUID (for multi-tenancy in Phase 8)

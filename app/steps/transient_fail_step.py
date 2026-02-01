@@ -61,15 +61,20 @@ class TransientFailStep:
         """
         started_at = datetime.utcnow()
         
-        # Increment attempt counter
-        self.attempt_count += 1
+        started_at = datetime.utcnow()
+        
+        # Use retry_count from context (0-indexed)
+        # 0 = attempt 1
+        # 1 = attempt 2
+        # etc.
+        current_attempt = context.retry_count + 1
         
         # Get fail_count from step config (default: 2)
         # Note: In real implementation, this would come from step.config
         # For now, we hardcode it to fail 2 times
         fail_count = 2
         
-        if self.attempt_count <= fail_count:
+        if current_attempt <= fail_count:
             # Fail with transient error
             input_summary = str(input)[:100] if input else "None"
             error_message = (
