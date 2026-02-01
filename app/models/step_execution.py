@@ -11,7 +11,7 @@ from datetime import datetime
 from uuid import uuid4
 import enum
 
-from sqlalchemy import String, DateTime, ForeignKey, Text, Enum as SQLEnum, JSON
+from sqlalchemy import String, DateTime, ForeignKey, Text, Enum as SQLEnum, JSON, Integer, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -81,6 +81,11 @@ class StepExecution(Base):
     output: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_type: Mapped[str | None] = mapped_column(String(50), nullable=True)  # "transient" | "permanent"
+    
+    # Retry tracking
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_retry: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    parent_step_execution_id: Mapped[UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     
     # Timestamps
     started_at: Mapped[datetime | None] = mapped_column(

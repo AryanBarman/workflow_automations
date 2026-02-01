@@ -64,6 +64,7 @@ class Step(Base):
         nullable=False
     )
     config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    retry_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {"max_retries": 3, "backoff_seconds": 2}
     order: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
