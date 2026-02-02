@@ -421,20 +421,42 @@ class LinearExecutor:
         Raises:
             ValueError: If step type is not recognized
         """
+        from app.steps.http_step import HttpStep
+        from app.steps.weather_transform_step import WeatherTransformStep
+        
+        instance: StepExecutor = None
+        
         if step.type == StepType.MANUAL:
-            return InputStep()
+            instance = InputStep()
         elif step.type == StepType.LOGIC:
-            return TransformStep()
+            if step.config.get("handler") == "weather_formatter":
+                instance = WeatherTransformStep()
+            else:
+                instance = TransformStep()
         elif step.type == StepType.STORAGE:
-            return PersistStep()
+            instance = PersistStep()
         elif step.type == StepType.AI:
             # For Phase 0, AI steps not implemented yet
-            return FailStep()
+            instance = FailStep()
         elif step.type == StepType.API:
-            # For Phase 1 validation, map API to TransientFailStep
-            return TransientFailStep()
+            # Check for handler type
+            handler = step.config.get("handler")
+            if handler == "http":
+                instance = HttpStep(config=step.config)
+            else:
+                # For Phase 1 validation, map default API to TransientFailStep
+                instance = TransientFailStep()
         else:
             raise ValueError(f"Unknown step type: {step.type}")
+            
+        # Inject config into instance if not already set by constructor
+        if not hasattr(instance, 'config'):
+            instance.config = step.config
+        # Also ensure it's updated if it was set to None/default
+        if not getattr(instance, 'config', None):
+             instance.config = step.config
+             
+        return instance
     
     def _should_retry(self, step: Step, step_execution: StepExecution, result: Any) -> bool:
         """
