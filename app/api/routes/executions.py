@@ -85,3 +85,77 @@ async def get_execution_logs(execution_id: UUID, db: AsyncSession = Depends(get_
     logs = logs_result.scalars().all()
     
     return logs
+
+
+@router.post("/{execution_id}/steps/{step_execution_id}/retry", response_model=WorkflowExecutionSchema)
+async def retry_step(execution_id: UUID, step_execution_id: UUID, db: AsyncSession = Depends(get_db)):
+    """
+    Manually retry a failed step.
+    
+    This creates a new StepExecution record (append-only) and triggers
+    synchronous execution of the step, then potentially resumes the workflow.
+    
+    Args:
+        execution_id: UUID of the workflow execution
+        step_execution_id: UUID of the FAILED StepExecution to retry
+        
+    Returns:
+        Updated workflow execution status
+        
+    Raises:
+        HTTPException: 404 if not found, 400 if not retryable
+    """
+    # Check execution existence
+    result = await db.execute(
+        select(WorkflowExecution)
+        .where(WorkflowExecution.id == execution_id)
+    )
+    execution = result.scalar_one_or_none()
+    
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    # IMPORTANT: Phase 1 simplification
+    # We are calling the Synchronous LinearExecutor from an Async Route.
+    # We must use a synchronous session for the executor.
+    # In a real app, this would offload to a Celery worker.
+    # Here, we bridge the gap by creating a sync session on the fly OR 
+    # (better for now) just using the async logic if LinearExecutor was async.
+    #
+    # Since LinearExecutor is SYNC and uses blocking IO (Task 0.3.3 spec),
+    # we have to run it in a threadpool or similar.
+    # BUT, to keep it "boring and simple" for Phase 1Prototype:
+    # We will instantiate a sync session just for this operation.
+    
+    from app.core.database import SessionLocal  # Sync session factory
+    from app.executor.linear_executor import LinearExecutor
+    
+    try:
+        # Run synchronous executor logic
+        with SessionLocal() as sync_db:
+            executor = LinearExecutor(sync_db)
+            
+            # Check if step execution exists and is failed (validation)
+            # define valid state
+            
+            try:
+                updated_execution = executor.resume_execution(str(execution_id), str(step_execution_id))
+            except ValueError as e:
+                 raise HTTPException(status_code=400, detail=str(e))
+                 
+            # Re-fetch with async session to return Pydantic model
+            # (Or just return the sync object converted)
+            
+    except Exception as e:
+        # Catch-all for executor errors
+        raise HTTPException(status_code=500, detail=f"Retry failed: {str(e)}")
+        
+    # Re-fetch updated state to return to UI
+    result = await db.execute(
+        select(WorkflowExecution)
+        .where(WorkflowExecution.id == execution_id)
+        .options(selectinload(WorkflowExecution.step_executions))
+    )
+    updated_execution = result.scalar_one_or_none()
+    
+    return updated_execution

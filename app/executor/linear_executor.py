@@ -109,29 +109,149 @@ class LinearExecutor:
         self._complete_workflow_execution(workflow_execution)
         
         return workflow_execution
+        
+    def resume_execution(self, workflow_execution_id: str, retry_step_execution_id: str) -> WorkflowExecution:
+        """
+        Resume workflow execution from a specific retry step.
+        
+        Args:
+            workflow_execution_id: The ID of the workflow execution to resume
+            retry_step_execution_id: The ID of the pending retry step execution
+            
+        Returns:
+            The updated workflow execution
+        """
+        import uuid
+        
+        # Get execution and step
+        workflow_execution = self.db_session.query(WorkflowExecution).filter_by(id=uuid.UUID(str(workflow_execution_id))).first()
+        if not workflow_execution:
+            raise ValueError(f"Workflow execution {workflow_execution_id} not found")
+            
+        step_execution = self.db_session.query(StepExecution).filter_by(id=uuid.UUID(str(retry_step_execution_id))).first()
+        if not step_execution:
+            raise ValueError(f"Step execution {retry_step_execution_id} not found")
+            
+        workflow = self.db_session.query(Workflow).filter_by(id=workflow_execution.workflow_id).first()
+        step = self.db_session.query(Step).filter_by(id=step_execution.step_id).first()
+        
+        # Transition workflow back to RUNNING if it was FAILED
+        if workflow_execution.status == WorkflowExecutionStatus.FAILED:
+            workflow_execution.status = WorkflowExecutionStatus.RUNNING
+            self.db_session.commit()
+            
+        input_data = step_execution.input
+        previous_retry_count = step_execution.retry_count
+        parent_id = step_execution.id
+
+        # Create NEW StepExecution for the manual retry
+        retry_step_execution = StepExecution(
+            workflow_execution_id=workflow_execution.id,
+            step_id=step.id,
+            status=StepExecutionStatus.PENDING,
+            input=input_data,
+            retry_count=previous_retry_count + 1,
+            is_retry=True,
+            parent_step_execution_id=parent_id
+        )
+        self.db_session.add(retry_step_execution)
+        self.db_session.commit()
+        self.db_session.refresh(retry_step_execution)
+            
+        # Execute the single step (synchronously) using the NEW execution record
+        result = self._execute_single_step(
+            step, 
+            retry_step_execution, 
+            workflow, 
+            workflow_execution, 
+            trigger_input=None, 
+            current_input=input_data
+        )
+
+        # Handle result and persist state (Mirroring logic from _execute_steps)
+        if result.status == "success":
+            # Transition to SUCCESS
+            retry_step_execution.transition_to(StepExecutionStatus.SUCCESS)
+            retry_step_execution.output = result.output
+            
+            # Log: Step completed successfully
+            log_success = ExecutionLog(
+                step_execution_id=str(retry_step_execution.id),
+                message=f"Step completed successfully: {step.type.value}",
+                log_metadata={"step_type": step.type.value, "status": "SUCCESS", "retry_count": retry_step_execution.retry_count}
+            )
+            self.db_session.add(log_success)
+            self.db_session.commit()
+            self.db_session.refresh(retry_step_execution)
+            
+        else:
+            # Transition to FAILED
+            retry_step_execution.transition_to(StepExecutionStatus.FAILED)
+            if result.error:
+                retry_step_execution.error = f"{result.error.code}: {result.error.message}"
+                retry_step_execution.error_type = result.error.error_type
+            
+            # Log: Step failed
+            error_msg = f"{result.error.code}: {result.error.message}" if result.error else "Unknown error"
+            log_failed = ExecutionLog(
+                step_execution_id=str(retry_step_execution.id),
+                message=f"Step failed: {step.type.value}",
+                log_metadata={
+                    "step_type": step.type.value,
+                    "status": "FAILED",
+                    "error": error_msg,
+                    "retry_count": retry_step_execution.retry_count
+                }
+            )
+            self.db_session.add(log_failed)
+            self.db_session.commit()
+            self.db_session.refresh(retry_step_execution)
+        
+        # If success, continue with remaining steps
+        if result.status == "success":
+            # Resume execution from next step
+            # Get next steps
+            next_steps = self.db_session.query(Step).filter(
+                Step.workflow_id == workflow.id,
+                Step.order > step.order
+            ).order_by(Step.order).all()
+            
+            if next_steps:
+                 # Pass output to next step
+                self._execute_steps(
+                    workflow_execution, 
+                    workflow, 
+                    trigger_input=None, 
+                    start_from_step_order=next_steps[0].order,
+                    initial_input=result.output
+                )
+        
+        # Complete workflow execution
+        self._complete_workflow_execution(workflow_execution)
+        
+        return workflow_execution
     
-    def _execute_steps(self, workflow_execution: WorkflowExecution, workflow: Workflow, trigger_input: Any) -> None:
+    def _execute_steps(self, workflow_execution: WorkflowExecution, workflow: Workflow, trigger_input: Any, start_from_step_order: int = 0, initial_input: Any = None) -> None:
         """
         Execute all steps in the workflow sequentially.
-        
-        This method:
-        - Iterates through steps in order
-        - Creates StepExecution for each step
-        - Executes step using the contract
-        - Manages state transitions
-        - Passes output from step N to step N+1
-        - Stops on first failure
         
         Args:
             workflow_execution: The workflow execution record
             workflow: The workflow definition
             trigger_input: The initial input data
+            start_from_step_order: Order number to start execution from (default 0 = start from beginning)
+            initial_input: Input to use for the first executed step (overrides trigger_input if set)
         """
-        # Get steps ordered by their order field (query directly to avoid relationship issues)
-        steps = self.db_session.query(Step).filter_by(workflow_id=workflow.id).order_by(Step.order).all()
+        # Get steps ordered by their order field
+        steps_query = self.db_session.query(Step).filter_by(workflow_id=workflow.id)
         
-        # Initialize current input with trigger input
-        current_input = trigger_input
+        if start_from_step_order > 0:
+            steps_query = steps_query.filter(Step.order >= start_from_step_order)
+            
+        steps = steps_query.order_by(Step.order).all()
+        
+        # Initialize current input
+        current_input = initial_input if initial_input is not None else trigger_input
         
         # Execute each step sequentially
         for step in steps:
@@ -149,34 +269,8 @@ class LinearExecutor:
             
             # Inner loop for retries
             while True:
-                # Transition to RUNNING
-                step_execution.transition_to(StepExecutionStatus.RUNNING)
-                self.db_session.commit()
-                
-                # Log: Step started
-                log_started = ExecutionLog(
-                    step_execution_id=str(step_execution.id),
-                    message=f"Step started: {step.type.value}" + (f" (Retry {step_execution.retry_count})" if step_execution.is_retry else ""),
-                    log_metadata={"step_type": step.type.value, "status": "RUNNING", "retry_count": step_execution.retry_count}
-                )
-                self.db_session.add(log_started)
-                self.db_session.commit()
-                
-                # Create execution context
-                context = ExecutionContext(
-                    workflow_execution_id=workflow_execution.id,
-                    step_execution_id=step_execution.id,
-                    workflow_id=workflow.id,
-                    step_id=step.id,
-                    trigger_input=trigger_input,
-                    retry_count=step_execution.retry_count
-                )
-                
-                # Instantiate and execute the step
-                step_instance = self._instantiate_step(step)
-                
-                # Execute step
-                result = step_instance.execute(current_input, context)
+                # Execute the step and get result
+                result = self._execute_single_step(step, step_execution, workflow, workflow_execution, trigger_input, current_input)
                 
                 # Handle result based on status
                 if result.status == "success":
@@ -279,6 +373,37 @@ class LinearExecutor:
             # we check the last execution status. If it's FAILED, stop workflow.
             if step_execution.status == StepExecutionStatus.FAILED:
                 break
+
+    def _execute_single_step(self, step: Step, step_execution: StepExecution, workflow: Workflow, workflow_execution: WorkflowExecution, trigger_input: Any, current_input: Any) -> Any:
+        """Helper to execute a single step instance."""
+        # Transition to RUNNING
+        step_execution.transition_to(StepExecutionStatus.RUNNING)
+        self.db_session.commit()
+        
+        # Log: Step started
+        log_started = ExecutionLog(
+            step_execution_id=str(step_execution.id),
+            message=f"Step started: {step.type.value}" + (f" (Retry {step_execution.retry_count})" if step_execution.is_retry else ""),
+            log_metadata={"step_type": step.type.value, "status": "RUNNING", "retry_count": step_execution.retry_count}
+        )
+        self.db_session.add(log_started)
+        self.db_session.commit()
+        
+        # Create execution context
+        context = ExecutionContext(
+            workflow_execution_id=workflow_execution.id,
+            step_execution_id=step_execution.id,
+            workflow_id=workflow.id,
+            step_id=step.id,
+            trigger_input=trigger_input,
+            retry_count=step_execution.retry_count
+        )
+        
+        # Instantiate and execute the step
+        step_instance = self._instantiate_step(step)
+        
+        # Execute step
+        return step_instance.execute(current_input, context)
     
     def _instantiate_step(self, step: Step) -> StepExecutor:
         """

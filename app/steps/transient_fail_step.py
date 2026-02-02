@@ -71,8 +71,8 @@ class TransientFailStep:
         
         # Get fail_count from step config (default: 2)
         # Note: In real implementation, this would come from step.config
-        # For now, we hardcode it to fail 2 times
-        fail_count = 2
+        # For now, we hardcode it to fail 1 time (fail on first attempt, succeed on retry)
+        fail_count = 1
         
         if current_attempt <= fail_count:
             # Fail with transient error

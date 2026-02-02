@@ -28,6 +28,15 @@ AsyncSessionLocal = async_sessionmaker(
     expire_on_commit=False,
 )
 
+# Phase 1: Add Sync Engine support for LinearExecutor
+# This allows mixing async API with sync Executor logic
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+SYNC_DATABASE_URL = settings.database_url
+sync_engine = create_engine(SYNC_DATABASE_URL, echo=settings.debug)
+SessionLocal = sessionmaker(bind=sync_engine)
+
 
 class Base(DeclarativeBase):
     """Base class for all database models."""
