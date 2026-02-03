@@ -35,7 +35,8 @@ def seed_workflow():
                 "handler": "http",
                 "url": "https://wttr.in/Paris?format=j1",
                 "method": "GET",
-                "timeout": 10
+                "timeout": 10,
+                "headers_from_input": True
             },
             order=1
         )

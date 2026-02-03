@@ -402,8 +402,70 @@ class LinearExecutor:
         # Instantiate and execute the step
         step_instance = self._instantiate_step(step)
         
-        # Execute step
-        return step_instance.execute(current_input, context)
+        from func_timeout import func_timeout, FunctionTimedOut
+        from app.core.executor_contract import StepResult, StepError
+        from datetime import datetime
+        import jsonschema
+
+        # 1. Validate Input (Pre-execution)
+        if step.input_schema:
+            try:
+                # Ensure input is a dict for validation
+                input_to_validate = current_input if isinstance(current_input, dict) else {"value": current_input}
+                jsonschema.validate(instance=input_to_validate, schema=step.input_schema)
+            except jsonschema.ValidationError as ve:
+                error = StepError(
+                    code="VALIDATION_ERROR",
+                    message=f"Input validation failed: {ve.message}",
+                    retryable=False,
+                    error_type="permanent"
+                )
+                return StepResult(status="failure", error=error, metadata=None)
+
+        # Execute step with timeout
+        try:
+            result = func_timeout(step.timeout_seconds, step_instance.execute, args=(current_input, context))
+            
+            # 2. Validate Output (Post-execution, only on success)
+            if result.status == "success" and step.output_schema:
+                try:
+                    jsonschema.validate(instance=result.output, schema=step.output_schema)
+                except jsonschema.ValidationError as ve:
+                    error = StepError(
+                        code="VALIDATION_ERROR",
+                        message=f"Output validation failed: {ve.message}",
+                        retryable=False,
+                        error_type="permanent"
+                    )
+                    return StepResult(status="failure", error=error, metadata=result.metadata)
+            
+            return result
+
+        except FunctionTimedOut:
+            duration_ms = int(step.timeout_seconds * 1000) # Approximate since it timed out
+            # We need to construct a proper metadata object even on timeout? 
+            # Ideally step_instance.execute would have returned one, but it didn't.
+            # So we create a synthetic one.
+            from app.core.executor_contract import StepMetadata
+            metadata = StepMetadata(
+                duration_ms=duration_ms, 
+                started_at=datetime.utcnow(), # Approximate
+                finished_at=datetime.utcnow()
+            )
+            
+            error = StepError(
+                 code="TIMEOUT",
+                 message=f"Step execution timed out after {step.timeout_seconds} seconds",
+                 retryable=True, # Timeouts are essentially transient/resource issues? Or permanent logic loops? 
+                 # Let's say transient for now (could be network hang, slow database)
+                 error_type="transient"
+            )
+            return StepResult(status="failure", error=error, metadata=metadata)
+        except Exception as e:
+            # Fallback for unhandled exceptions (though steps should handle them)
+            # Use step wrapper logic if needed, but for now just let it bubble or catch here?
+            # The contract says "no exceptions escape the contract", but if the step violates that...
+            raise e
     
     def _instantiate_step(self, step: Step) -> StepExecutor:
         """

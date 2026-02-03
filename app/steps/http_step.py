@@ -39,22 +39,36 @@ class HttpStep:
            return self._fail(started_at, "Missing URL in step config", context)
 
         method = self.config.get("method", "GET").upper()
-        headers = self.config.get("headers", {})
+        headers = self.config.get("headers", {}).copy()  # Copy to avoid mutating config
         timeout = self.config.get("timeout", 10)
         
+        # Handle dynamic headers from input
+        if self.config.get("headers_from_input") and isinstance(input, dict):
+            dynamic_headers = input.get("_headers", {})
+            if isinstance(dynamic_headers, dict):
+                headers.update(dynamic_headers)
+        
+        # Prepare arguments
+        kwargs = {
+            "headers": headers,
+            "timeout": timeout
+        }
+        
+        # Handle dynamic body from input
+        if self.config.get("body_from_input"):
+             # Use the whole input as the JSON body (excluding _headers if we want to be clean, 
+             # but strictly following "minimal code", we just pass input.
+             # If input has _headers, it gets sent in body. 
+             # Refinement: strip _headers?
+             # Let's strip _headers to avoid leaking it to the API.
+             if isinstance(input, dict):
+                 json_body = input.copy()
+                 json_body.pop("_headers", None)
+                 kwargs["json"] = json_body
+             else:
+                 kwargs["json"] = input
+        
         try:
-            # Prepare arguments
-            kwargs = {
-                "headers": headers,
-                "timeout": timeout
-            }
-            
-            # If input is a dict and method is POST/PUT, send as JSON body?
-            # Or if config has 'body_from_input': True
-            # For this simple use case (Weather), we ignore input for the request usually,
-            # unless constructing dynamic URL.
-            # Simplified: just request.
-            
             response = requests.request(method, url, **kwargs)
             
             # Check status
@@ -68,16 +82,28 @@ class HttpStep:
                 output["_status"] = response.status_code
                 
                 return self._success(started_at, output)
+            
+            # Application Logic Error (HTTP 4xx/5xx)
             else:
+                is_server_error = response.status_code >= 500
+                error_category = "Transient" if is_server_error else "Permanent"
+                
+                # Fail with explicit category in message
                 return self._fail(
                     started_at, 
-                    f"HTTP {response.status_code}: {response.text[:200]}", 
+                    f"HTTP {response.status_code} ({error_category}): {response.text[:200]}", 
                     context,
-                    error_type="transient" if response.status_code >= 500 else "permanent"
+                    error_type="transient" if is_server_error else "permanent"
                 )
                 
         except Exception as e:
-            return self._fail(started_at, str(e), context, error_type="transient")
+            # Network/Timeout/Connection errors are generally transient
+            return self._fail(
+                started_at, 
+                f"Network Error (Transient): {str(e)}", 
+                context, 
+                error_type="transient"
+            )
 
     def _success(self, started_at, output):
         finished_at = datetime.utcnow()

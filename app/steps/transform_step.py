@@ -51,6 +51,14 @@ class TransformStep:
         """
         started_at = datetime.utcnow()
         
+        # Testing capability: Sleep if configured
+        # This allows us to simulate slow steps for timeout testing
+        # Note: In a real logic step, this might be based on input, but for now config is fine.
+        sleep_seconds = self.config.get("sleep", 0)
+        if sleep_seconds > 0:
+            import time
+            time.sleep(sleep_seconds)
+        
         # Phase 0 transformation: Add processing metadata
         # In later phases, this could be configurable
         if isinstance(input, dict):
