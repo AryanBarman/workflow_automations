@@ -21,7 +21,7 @@ from app.models import (
     ExecutionLog
 )
 from app.core.executor_contract import ExecutionContext, StepExecutor
-from app.steps import InputStep, TransformStep, PersistStep, FailStep, TransientFailStep
+from app.steps import create_step
 
 
 class LinearExecutor:
@@ -152,7 +152,8 @@ class LinearExecutor:
             input=input_data,
             retry_count=previous_retry_count + 1,
             is_retry=True,
-            parent_step_execution_id=parent_id
+            parent_step_execution_id=parent_id,
+            step_metadata=self._get_ai_step_metadata(step) if step.type == StepType.AI else None,
         )
         self.db_session.add(retry_step_execution)
         self.db_session.commit()
@@ -260,7 +261,8 @@ class LinearExecutor:
                 workflow_execution_id=workflow_execution.id,
                 step_id=step.id,
                 status=StepExecutionStatus.PENDING,
-                input=current_input if isinstance(current_input, dict) else {"value": current_input}
+                input=current_input if isinstance(current_input, dict) else {"value": current_input},
+                step_metadata=self._get_ai_step_metadata(step) if step.type == StepType.AI else None,
             )
             
             self.db_session.add(step_execution)
@@ -354,7 +356,8 @@ class LinearExecutor:
                             input=current_input if isinstance(current_input, dict) else {"value": current_input},
                             retry_count=current_retry_count + 1,
                             is_retry=True,
-                            parent_step_execution_id=parent_id
+                            parent_step_execution_id=parent_id,
+                            step_metadata=self._get_ai_step_metadata(step) if step.type == StepType.AI else None,
                         )
                         
                         self.db_session.add(step_execution)
@@ -466,60 +469,24 @@ class LinearExecutor:
             # Use step wrapper logic if needed, but for now just let it bubble or catch here?
             # The contract says "no exceptions escape the contract", but if the step violates that...
             raise e
-    
+
+    def _get_ai_step_metadata(self, step: Step) -> dict:
+        """Build AI metadata for persistence on StepExecution."""
+        return {
+            "provider": step.config.get("provider"),
+            "model": step.config.get("model"),
+            "prompt_id": step.config.get("prompt_id"),
+            "prompt_version": step.config.get("prompt_version"),
+        }
+
     def _instantiate_step(self, step: Step) -> StepExecutor:
         """
         Instantiate the appropriate step class based on step type.
-        
-        For Phase 0, we use simple if/elif mapping.
-        In later phases, this could use a factory pattern.
-        
-        Args:
-            step: The step definition
-            
-        Returns:
-            An instance of the appropriate step class
-            
-        Raises:
-            ValueError: If step type is not recognized
+
+        This is delegated to the step registry to keep executor stable.
         """
-        from app.steps.http_step import HttpStep
-        from app.steps.weather_transform_step import WeatherTransformStep
-        
-        instance: StepExecutor = None
-        
-        if step.type == StepType.MANUAL:
-            instance = InputStep()
-        elif step.type == StepType.LOGIC:
-            if step.config.get("handler") == "weather_formatter":
-                instance = WeatherTransformStep()
-            else:
-                instance = TransformStep()
-        elif step.type == StepType.STORAGE:
-            instance = PersistStep()
-        elif step.type == StepType.AI:
-            # For Phase 0, AI steps not implemented yet
-            instance = FailStep()
-        elif step.type == StepType.API:
-            # Check for handler type
-            handler = step.config.get("handler")
-            if handler == "http":
-                instance = HttpStep(config=step.config)
-            else:
-                # For Phase 1 validation, map default API to TransientFailStep
-                instance = TransientFailStep()
-        else:
-            raise ValueError(f"Unknown step type: {step.type}")
-            
-        # Inject config into instance if not already set by constructor
-        if not hasattr(instance, 'config'):
-            instance.config = step.config
-        # Also ensure it's updated if it was set to None/default
-        if not getattr(instance, 'config', None):
-             instance.config = step.config
-             
-        return instance
-    
+        return create_step(step)
+
     def _should_retry(self, step: Step, step_execution: StepExecution, result: Any) -> bool:
         """
         Check if a failed step should be retried.

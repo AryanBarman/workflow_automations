@@ -39,6 +39,7 @@ class StepExecutionSchema(BaseModel):
     output: Optional[dict] = None
     error: Optional[str] = None
     error_type: Optional[str] = None  # "transient" | "permanent"
+    step_metadata: Optional[dict] = None
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     

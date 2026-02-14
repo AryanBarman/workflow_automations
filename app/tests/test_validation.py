@@ -10,7 +10,8 @@ sys.path.append(os.path.join(os.getcwd(), "workflow_automation_backend"))
 
 from app.executor.linear_executor import LinearExecutor
 from app.models import Step, StepType
-from app.core.executor_contract import StepResult, StepMetadata, StepExecutionStatus
+from app.core.executor_contract import StepResult, StepMetadata
+from app.models.step_execution import StepExecutionStatus
 
 class TestValidation(unittest.TestCase):
     def setUp(self):
