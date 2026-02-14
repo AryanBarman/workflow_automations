@@ -43,7 +43,7 @@ class LinearExecutor:
     - Depends only on the Step Executor Contract
     - Synchronous (Phase 0 is linear)
     - No retry logic (Phase 1)
-    - No validation (Phase 2)
+    - Includes timeouts and schema validation (Phase 2)
     """
     
     def __init__(self, db_session: Session):
@@ -608,3 +608,4 @@ class LinearExecutor:
         # Persist final state
         self.db_session.commit()
         self.db_session.refresh(workflow_execution)
+
